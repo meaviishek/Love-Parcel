@@ -1,0 +1,153 @@
+################################
+# Backend Deployment
+################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: loveparcel
+  labels:
+    app: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: YOUR_ECR_REGISTRY/loveparcel-backend:latest  # replaced by CI/CD
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "5000"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: DATABASE_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: JWT_SECRET
+            - name: CLOUDINARY_CLOUD_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: CLOUDINARY_CLOUD_NAME
+            - name: CLOUDINARY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: CLOUDINARY_API_KEY
+            - name: CLOUDINARY_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: CLOUDINARY_API_SECRET
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: REDIS_URL
+            - name: RAZORPAY_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: RAZORPAY_KEY_ID
+            - name: RAZORPAY_KEY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: RAZORPAY_KEY_SECRET
+            - name: CASHFREE_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: CASHFREE_APP_ID
+            - name: CASHFREE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: CASHFREE_SECRET_KEY
+            - name: SMTP_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: SMTP_HOST
+            - name: SMTP_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: SMTP_PORT
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: SMTP_USER
+            - name: SMTP_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: SMTP_PASS
+            - name: GOOGLE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: GOOGLE_CLIENT_ID
+            - name: GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: loveparcel-secrets
+                  key: GOOGLE_CLIENT_SECRET
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+################################
+# Backend Service (ClusterIP)
+################################
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: loveparcel
+spec:
+  selector:
+    app: backend
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+  type: ClusterIP

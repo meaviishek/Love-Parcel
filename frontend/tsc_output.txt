@@ -1,0 +1,17 @@
+app/page.tsx(1,20): error TS2307: Cannot find module '@/frontend/components/Navbar' or its corresponding type declarations.
+app/page.tsx(2,18): error TS2307: Cannot find module '@/frontend/components/Hero' or its corresponding type declarations.
+app/page.tsx(3,29): error TS2307: Cannot find module '@/frontend/components/ShopByRecipient' or its corresponding type declarations.
+app/page.tsx(4,25): error TS2307: Cannot find module '@/frontend/components/ShopByPrice' or its corresponding type declarations.
+app/page.tsx(5,28): error TS2307: Cannot find module '@/frontend/components/LatestProducts' or its corresponding type declarations.
+app/page.tsx(6,30): error TS2307: Cannot find module '@/frontend/components/TrendingProducts' or its corresponding type declarations.
+app/page.tsx(7,23): error TS2307: Cannot find module '@/frontend/components/AdBanners' or its corresponding type declarations.
+app/page.tsx(8,30): error TS2307: Cannot find module '@/frontend/components/ScrollingMarquee' or its corresponding type declarations.
+app/page.tsx(9,28): error TS2307: Cannot find module '@/frontend/components/HandmadeBanner' or its corresponding type declarations.
+app/page.tsx(10,26): error TS2307: Cannot find module '@/frontend/components/Testimonials' or its corresponding type declarations.
+app/page.tsx(11,30): error TS2307: Cannot find module '@/frontend/components/CollectionBanner' or its corresponding type declarations.
+app/page.tsx(12,27): error TS2307: Cannot find module '@/frontend/components/InstagramFeed' or its corresponding type declarations.
+app/page.tsx(13,20): error TS2307: Cannot find module '@/frontend/components/Footer' or its corresponding type declarations.
+app/shop/page.tsx(4,20): error TS2307: Cannot find module '@/components/Navbar' or its corresponding type declarations.
+app/shop/page.tsx(5,20): error TS2307: Cannot find module '@/components/Footer' or its corresponding type declarations.
+app/shop/page.tsx(8,30): error TS2307: Cannot find module '@/components/CollectionBanner' or its corresponding type declarations.
+components/ShopGrid.tsx(2,25): error TS2307: Cannot find module './ProductCard' or its corresponding type declarations.

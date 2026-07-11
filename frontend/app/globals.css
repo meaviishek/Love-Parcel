@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@theme {
+    --color-primary: #f10019;
+    --color-secondary: #000000;
+    --color-primary-light: #ff334b;
+    --color-off-white: #F9F9F9;
+    --font-sans: var(--font-poppins);
+    --font-serif: var(--font-montserrat);
+    /* Mapping serif to Montserrat as requested to remove Playfair */
+    --font-montserrat: var(--font-montserrat);
+
+    /* Override Gray Palette to be Neutral */
+    --color-gray-50: #fafafa;
+    --color-gray-100: #f5f5f5;
+    --color-gray-200: #e5e5e5;
+    --color-gray-300: #d4d4d4;
+    --color-gray-400: #a3a3a3;
+    --color-gray-500: #737373;
+    --color-gray-600: #525252;
+    --color-gray-700: #404040;
+    --color-gray-800: #262626;
+    --color-gray-900: #171717;
+    --color-gray-950: #0a0a0a;
+}
+
+:root {
+    --foreground-rgb: 255, 255, 255;
+    --background-start-rgb: 0, 0, 0;
+    --background-end-rgb: 0, 0, 0;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --foreground-rgb: 255, 255, 255;
+        --background-start-rgb: 0, 0, 0;
+        --background-end-rgb: 0, 0, 0;
+    }
+}
+
+body {
+    color: rgb(var(--foreground-rgb));
+    background-color: black;
+    background-image:
+        radial-gradient(circle at 50% 0%, #330505 0%, #000000 60%),
+        radial-gradient(circle at 85% 30%, #220000 0%, transparent 40%),
+        radial-gradient(circle at 15% 70%, #1a0000 0%, transparent 40%);
+    background-attachment: fixed;
+    font-family: var(--font-poppins), sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+@utility text-balance {
+    text-wrap: balance;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #0a0a0a;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #404040;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #737373;
+}
+
+/* Firefox */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #404040 #0a0a0a;
+}
