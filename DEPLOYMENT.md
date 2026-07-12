@@ -1,232 +1,259 @@
-# LoveParcel — AWS EC2 Deployment Guide
-## Docker + Nginx + GitHub Actions CI/CD
+# LoveParcel — Deployment Guide
 
-> **Stack**: Next.js 16 frontend · Express/Prisma backend · MongoDB Atlas · AWS EC2 · Amazon ECR · GitHub Actions · Nginx · Let's Encrypt SSL
-
----
-
-## Architecture Overview
-
-```
-Internet
-   |
-   |  HTTP/HTTPS
-   ▼
-┌──────────────────────────────────────────────┐
-│              AWS EC2 Instance                 │
-│                                              │
-│  ┌─────────────────────────────────────┐    │
-│  │  Nginx (port 80 / 443)              │    │
-│  │  yourdomain.com     → Frontend:3000 │    │
-│  │  api.yourdomain.com → Backend:5000  │    │
-│  └────────┬──────────────────┬─────────┘    │
-│           │                  │               │
-│  ┌────────▼──┐      ┌───────▼──────┐        │
-│  │ Frontend  │      │   Backend    │        │
-│  │ Next.js   │      │  Express +   │        │
-│  │ :3000     │      │  Prisma :5000│        │
-│  └───────────┘      └──────────────┘        │
-└──────────────────────────────────────────────┘
-        │                    │
-   MongoDB Atlas          Cloudinary / Redis / SMTP
-```
-
-**CI/CD Flow:**
-```
-git push main
-    ↓
-GitHub Actions
-    ↓ lint + type check
-    ↓ build Docker images
-    ↓ push to Amazon ECR
-    ↓ SSH into EC2
-    ↓ docker pull + docker compose up
-    ↓ health check verify
-```
+**Stack:** Next.js 16 + Express/Prisma + MongoDB Atlas + Docker + AWS
 
 ---
 
-## Files Created / Modified
+## Overview
 
-```
-loveparcel/
-├── .github/
-│   └── workflows/
-│       └── deploy.yml           ← CI/CD pipeline (GitHub Actions)
-├── backend/
-│   ├── Dockerfile               ← Multi-stage production image
-│   ├── .dockerignore
-│   └── src/app.js               ← Added /health endpoint
-├── frontend/
-│   ├── Dockerfile               ← Multi-stage production image
-│   ├── .dockerignore
-│   └── next.config.ts           ← Added output: standalone
-├── nginx/
-│   └── nginx.conf               ← Nginx reverse proxy config
-├── docker-compose.yml           ← Local dev/testing
-└── docker-compose.prod.yml      ← EC2 production (pulls from ECR)
+This guide has 3 parts:
+
+| Part | What | Time |
+|------|------|------|
+| [Part 1](#part-1--run-locally-with-docker) | Run both apps locally with Docker | ~10 min |
+| [Part 2](#part-2--deploy-on-aws-ec2-simple) | Deploy on AWS EC2 (simple, cheap) | ~45 min |
+| [Part 3](#part-3--deploy-on-aws-eks-kubernetes) | Deploy on AWS EKS (Kubernetes, scalable) | ~90 min |
+
+> **Recommendation:** Do Part 1 first to verify everything works, then choose Part 2 (EC2) or Part 3 (EKS) for production.
+
+---
+
+# PART 1 — Run Locally with Docker
+
+### What you need
+- [Docker Desktop](https://www.docker.com/products/docker-desktop) installed and **open/running**
+
+---
+
+### Step 1 — Create `.env` file
+
+Create a file called `.env` in the root folder `d:\Dinestx\loveparcel\` with these values:
+
+```env
+# Database (MongoDB Atlas — https://cloud.mongodb.com)
+DATABASE_URL=mongodb+srv://YOUR_USERNAME:YOUR_PASSWORD@cluster0.xxxxx.mongodb.net/loveparcel
+
+# JWT Secret (any random long string)
+JWT_SECRET=my_super_secret_key_make_it_long_and_random
+
+# Cloudinary (https://cloudinary.com — free account)
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=123456789012345
+CLOUDINARY_API_SECRET=your_api_secret_here
+
+# Redis (https://upstash.com — free account)
+REDIS_URL=rediss://default:password@your-url.upstash.io:6379
+
+# Razorpay (https://razorpay.com)
+RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxxxxx
+RAZORPAY_KEY_SECRET=your_razorpay_secret
+
+# Cashfree (https://cashfree.com)
+CASHFREE_APP_ID=your_cashfree_app_id
+CASHFREE_SECRET_KEY=your_cashfree_secret
+
+# Email — Gmail App Password
+# Get it: Google Account → Security → 2-Step Verification → App passwords
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=yourname@gmail.com
+SMTP_PASS=xxxx xxxx xxxx xxxx
+
+# Google OAuth (https://console.cloud.google.com)
+GOOGLE_CLIENT_ID=123456789-abc.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-your_secret_here
+
+# This tells the frontend where the backend is
+NEXT_PUBLIC_API_URL=http://localhost:5000
 ```
 
 ---
 
-## PART 1 — One-Time AWS Setup (Do This First)
+### Step 2 — Start Both Apps
 
-### Step 1.1 — Create an AWS Account
+Open **PowerShell** or **Command Prompt** in `d:\Dinestx\loveparcel\` and run:
 
-1. Go to https://aws.amazon.com and click **Create an AWS Account**
+```bash
+docker-compose up --build
+```
+
+First time takes **3–5 minutes** (downloading + building). Wait until you see both services say ready.
+
+---
+
+### Step 3 — Open in Browser
+
+| URL | What you should see |
+|-----|---------------------|
+| `http://localhost:3000` | Your frontend (Next.js) |
+| `http://localhost:5000/health` | `{"status":"ok"}` — backend is running |
+| `http://localhost:5000/api/categories` | Categories from your database |
+
+---
+
+### Step 4 — Stop Everything
+
+```bash
+# In the same terminal, press Ctrl+C, then run:
+docker-compose down
+```
+
+---
+
+# PART 2 — Deploy on AWS EC2 (Simple)
+
+> **Best for:** Small to medium traffic, low cost (~$15–30/month), simple setup.
+
+---
+
+## A — Create AWS Account & User
+
+### Step A1 — Create AWS Account
+1. Go to **https://aws.amazon.com** → click **Create an AWS Account**
 2. Enter email, password, account name
-3. Add a credit card (you won't be charged for free tier usage)
-4. Choose **Basic Support (Free)**
-5. After signup, sign in to the **AWS Management Console**: https://console.aws.amazon.com
+3. Add credit card (won't be charged for free tier)
+4. After signup → sign in at **https://console.aws.amazon.com**
 
 ---
 
-### Step 1.2 — Create an IAM User (Don't use root account!)
+### Step A2 — Create IAM User (for safe access)
 
-1. In the AWS Console, search for **IAM** → click it
-2. Click **Users** in the left sidebar → **Add users**
-3. Username: `loveparcel-deploy`
+> Never use your root account. Create a user instead.
+
+1. In AWS Console → search bar → type **IAM** → click it
+2. Left menu → **Users** → click **Create user**
+3. Username: `loveparcel-admin`
 4. Click **Next** → Select **Attach policies directly**
-5. Search and attach these policies:
-   - `AmazonEC2FullAccess`
-   - `AmazonECRFullAccess`
-   - `IAMReadOnlyAccess`
+5. Search and check these policies:
+   - ✅ `AmazonEC2FullAccess`
+   - ✅ `AmazonECRFullAccess`
 6. Click **Create user**
-7. Click on the user → **Security credentials** tab → **Create access key**
-8. Choose **Command Line Interface (CLI)**
-9. **Download the CSV file** — you'll need the Access Key ID and Secret
+7. Click on the user you just created → **Security credentials** tab
+8. Click **Create access key** → choose **Command Line Interface (CLI)**
+9. Click **Create access key** → **Download .csv file** ← SAVE THIS FILE
 
 ---
 
-### Step 1.3 — Install Required Tools on Your Computer
-
-**Windows (PowerShell as Administrator):**
+### Step A3 — Install AWS CLI on Your Computer
 
 ```powershell
-# Install AWS CLI
+# Run in PowerShell as Administrator
 winget install -e --id Amazon.AWSCLI
 
-# Install Docker Desktop (if not already installed)
-# Download from https://www.docker.com/products/docker-desktop
-
-# Verify installations
+# Close and reopen PowerShell, then verify:
 aws --version
-docker --version
+# Should show: aws-cli/2.x.x ...
 ```
 
----
-
-### Step 1.4 — Configure AWS CLI
-
+Configure AWS CLI with your keys:
 ```bash
 aws configure
 ```
-
-Enter when prompted:
+Enter when asked:
 ```
-AWS Access Key ID:     [paste your Access Key ID]
-AWS Secret Access Key: [paste your Secret Access Key]
-Default region name:   ap-south-1         ← Mumbai (or choose your region)
+AWS Access Key ID:     [paste from the CSV file]
+AWS Secret Access Key: [paste from the CSV file]
+Default region name:   ap-south-1
 Default output format: json
 ```
 
-Verify it works:
+Test it works:
 ```bash
 aws sts get-caller-identity
-# You should see your account ID and user ARN
+# Should print your account ID and user ARN
 ```
 
 ---
 
-### Step 1.5 — Create Amazon ECR Repositories
-
-ECR (Elastic Container Registry) is where your Docker images are stored.
+### Step A4 — Create ECR Repositories (Docker Image Storage)
 
 ```bash
-# Set your region
-AWS_REGION=ap-south-1
+# Create 2 repositories — one for backend, one for frontend
+aws ecr create-repository --repository-name loveparcel-backend --region ap-south-1
+aws ecr create-repository --repository-name loveparcel-frontend --region ap-south-1
 
-# Create repos
-aws ecr create-repository --repository-name loveparcel-backend --region $AWS_REGION
-aws ecr create-repository --repository-name loveparcel-frontend --region $AWS_REGION
-
-# Print your ECR registry URL (you'll need this later)
-AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-echo "Your ECR registry: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+# Print your ECR URL (you'll need this later)
+$ACCOUNT_ID = aws sts get-caller-identity --query Account --output text
+echo "Your ECR: $ACCOUNT_ID.dkr.ecr.ap-south-1.amazonaws.com"
 ```
 
 ---
 
-## PART 2 — Launch & Configure EC2 Instance
+## B — Launch EC2 Server
 
-### Step 2.1 — Launch EC2 Instance
+### Step B1 — Create EC2 Instance
 
-1. In AWS Console, search **EC2** → click it
-2. Click **Launch Instance** (orange button)
+1. AWS Console → search **EC2** → click it
+2. Click **Launch instance** (orange button)
 3. Fill in the form:
 
-   | Field | Value |
-   |-------|-------|
-   | Name | `loveparcel-server` |
-   | OS / AMI | **Ubuntu Server 24.04 LTS** (Free tier eligible) |
-   | Instance type | `t3.medium` (2 vCPU, 4GB RAM) — recommended for both apps |
-   | Key pair | Click **Create new key pair** → name it `loveparcel-key` → RSA → .pem → Download |
-   | Storage | 20 GB gp3 |
+   **Name:** `loveparcel-server`
 
-4. Under **Network settings** → **Edit**:
-   - Allow SSH (port 22) — Source: My IP
-   - Click **Add security group rule** → Custom TCP → Port 80 → Source: 0.0.0.0/0
-   - Click **Add security group rule** → Custom TCP → Port 443 → Source: 0.0.0.0/0
+   **Application and OS Images:** Choose **Ubuntu Server 24.04 LTS** (Free tier eligible)
 
-5. Click **Launch Instance**
-6. Note down the **Public IPv4 address** (e.g. `13.234.56.78`)
+   **Instance type:** `t3.medium` ← recommended (2 CPU, 4GB RAM)
+
+   **Key pair:** Click **Create new key pair**
+   - Name: `loveparcel-key`
+   - Type: RSA
+   - Format: .pem
+   - Click **Create key pair** → it downloads automatically — **don't lose this file!**
+
+   **Storage:** Change to **20 GB**
+
+4. Under **Network settings** → click **Edit**:
+
+   | Rule | Port | Source |
+   |------|------|--------|
+   | SSH | 22 | My IP ← select this from dropdown |
+   | HTTP | 80 | 0.0.0.0/0 |
+   | HTTPS | 443 | 0.0.0.0/0 |
+
+5. Click **Launch instance**
+6. Click on the instance → copy the **Public IPv4 address** (e.g. `13.234.56.78`)
 
 ---
 
-### Step 2.2 — Connect to EC2
-
-**On Windows (PowerShell):**
+### Step B2 — Connect to Your Server
 
 ```powershell
-# Move the downloaded .pem file somewhere safe
-# e.g. C:\Users\HP\.ssh\loveparcel-key.pem
+# Move the downloaded key to a safe place first
+# Example: C:\Users\HP\.ssh\loveparcel-key.pem
 
-# Fix permissions (Windows)
+# Fix key permissions (required for SSH to work on Windows)
 icacls "C:\Users\HP\.ssh\loveparcel-key.pem" /inheritance:r /grant:r "$($env:USERNAME):(R)"
 
-# SSH into EC2
-ssh -i "C:\Users\HP\.ssh\loveparcel-key.pem" ubuntu@YOUR_EC2_PUBLIC_IP
+# Connect (replace YOUR_EC2_IP with your actual IP)
+ssh -i "C:\Users\HP\.ssh\loveparcel-key.pem" ubuntu@YOUR_EC2_IP
 ```
 
-Replace `YOUR_EC2_PUBLIC_IP` with your actual EC2 IP (e.g. `13.234.56.78`).
+You are now inside your EC2 server.
 
 ---
 
-### Step 2.3 — Install Docker on EC2
+### Step B3 — Install Docker on EC2
 
-Run these commands **inside your EC2 terminal** (after SSH):
+Run these commands **inside the EC2 SSH terminal**:
 
 ```bash
 # Update system
 sudo apt update && sudo apt upgrade -y
 
 # Install Docker
-sudo apt install -y ca-certificates curl gnupg lsb-release
-sudo mkdir -p /etc/apt/keyrings
+sudo apt install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
   https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
   sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 sudo apt update
 sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-# Allow ubuntu user to run docker without sudo
+# Let ubuntu user run docker without sudo
 sudo usermod -aG docker ubuntu
-
-# Apply group change (log out and back in, OR run this)
 newgrp docker
 
 # Verify
@@ -236,7 +263,7 @@ docker compose version
 
 ---
 
-### Step 2.4 — Install AWS CLI on EC2
+### Step B4 — Install AWS CLI on EC2
 
 ```bash
 # Inside EC2 terminal
@@ -245,100 +272,137 @@ sudo apt install -y unzip
 unzip awscliv2.zip
 sudo ./aws/install
 
-# Verify
-aws --version
-```
-
-Configure AWS CLI on EC2:
-```bash
+# Configure (same keys as your computer)
 aws configure
-# Use the same Access Key ID and Secret from Step 1.2
-# Region: ap-south-1 (same as your ECR)
-# Output: json
+# Region: ap-south-1, Output: json
 ```
 
 ---
 
-### Step 2.5 — Create Project Directory on EC2
+### Step B5 — Create Project Folder on EC2
 
 ```bash
-# Inside EC2 terminal
 mkdir -p /home/ubuntu/loveparcel/nginx
-mkdir -p /home/ubuntu/loveparcel/nginx/certs
+```
+
+---
+
+## C — Deploy the App
+
+### Step C1 — Build & Push Images (on your computer)
+
+Open PowerShell on **your local machine** (not EC2):
+
+```powershell
+# Set variables
+$REGION = "ap-south-1"
+$ACCOUNT_ID = (aws sts get-caller-identity --query Account --output text)
+$ECR = "$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
+
+# Login to ECR
+aws ecr get-login-password --region $REGION | `
+  docker login --username AWS --password-stdin $ECR
+
+# Build and push backend
+docker build -t "$ECR/loveparcel-backend:latest" ./backend
+docker push "$ECR/loveparcel-backend:latest"
+
+# Build and push frontend
+# Replace https://api.yourdomain.com with your actual API URL
+docker build `
+  --build-arg NEXT_PUBLIC_API_URL=https://api.yourdomain.com `
+  -t "$ECR/loveparcel-frontend:latest" `
+  ./frontend
+docker push "$ECR/loveparcel-frontend:latest"
+```
+
+---
+
+### Step C2 — Copy Config Files to EC2
+
+```powershell
+# From your local machine PowerShell
+$IP = "YOUR_EC2_IP"
+$KEY = "C:\Users\HP\.ssh\loveparcel-key.pem"
+
+scp -i $KEY docker-compose.prod.yml ubuntu@${IP}:/home/ubuntu/loveparcel/
+scp -i $KEY nginx/nginx.conf ubuntu@${IP}:/home/ubuntu/loveparcel/nginx/
+```
+
+---
+
+### Step C3 — Create `.env` on EC2
+
+SSH into EC2, then:
+
+```bash
+nano /home/ubuntu/loveparcel/.env
+```
+
+Paste and fill in (same values as Part 1 but with production API URL):
+
+```env
+NODE_ENV=production
+DATABASE_URL=mongodb+srv://USERNAME:PASSWORD@cluster0.xxxxx.mongodb.net/loveparcel
+JWT_SECRET=your_long_random_secret
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+REDIS_URL=rediss://your-upstash-url
+RAZORPAY_KEY_ID=rzp_live_xxxxx
+RAZORPAY_KEY_SECRET=your_secret
+CASHFREE_APP_ID=your_app_id
+CASHFREE_SECRET_KEY=your_secret
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your@gmail.com
+SMTP_PASS=your_app_password
+GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-your_secret
+NEXT_PUBLIC_API_URL=https://api.yourdomain.com
+ECR_REGISTRY=YOUR_ACCOUNT_ID.dkr.ecr.ap-south-1.amazonaws.com
+```
+
+Save: press `Ctrl+X` then `Y` then `Enter`
+
+---
+
+### Step C4 — Start the App on EC2
+
+```bash
 cd /home/ubuntu/loveparcel
+
+# Login to ECR from EC2
+aws ecr get-login-password --region ap-south-1 | \
+  docker login --username AWS --password-stdin \
+  $(aws sts get-caller-identity --query Account --output text).dkr.ecr.ap-south-1.amazonaws.com
+
+# Pull and start all containers
+docker compose -f docker-compose.prod.yml up -d
+
+# Check they are running
+docker ps
 ```
+
+You should see 3 containers running: `loveparcel-backend`, `loveparcel-frontend`, `loveparcel-nginx`
 
 ---
 
-### Step 2.6 — Attach IAM Role to EC2 (Alternative to CLI configure)
+### Step C5 — Point Domain & Get SSL
 
-Instead of running `aws configure` on EC2 with your personal keys, it's better to use an IAM role:
-
-1. In AWS Console → **IAM** → **Roles** → **Create role**
-2. Select **AWS Service** → **EC2** → Next
-3. Attach policy: `AmazonECRReadOnlyAccess`
-4. Name: `EC2ECRReadRole` → Create
-5. Go to **EC2 Console** → Select your instance → **Actions** → **Security** → **Modify IAM role**
-6. Attach `EC2ECRReadRole`
-
-Now your EC2 can pull from ECR without personal credentials.
-
----
-
-## PART 3 — Configure Your Domain & SSL
-
-### Step 3.1 — Point Your Domain to EC2
-
-In your domain registrar (GoDaddy, Namecheap, Cloudflare, etc.) add these DNS records:
-
+**DNS Records** (add in your domain provider — GoDaddy, Namecheap, Cloudflare):
 ```
-Type   Name              Value
-────────────────────────────────────────────
-A      yourdomain.com    YOUR_EC2_PUBLIC_IP
-A      api.yourdomain.com YOUR_EC2_PUBLIC_IP
+Type  Name               Value
+A     yourdomain.com     YOUR_EC2_IP
+A     api.yourdomain.com YOUR_EC2_IP
 ```
 
-Wait 5–30 minutes for DNS to propagate. Test with:
-```bash
-ping yourdomain.com
-# Should resolve to your EC2 IP
-```
-
----
-
-### Step 3.2 — Update Nginx Config with Your Domain
-
-On your local machine, edit [nginx/nginx.conf](file:///d:/Dinestx/loveparcel/nginx/nginx.conf):
-
-Replace **all occurrences** of:
-- `yourdomain.com` → your actual domain (e.g. `loveparcel.in`)
-- `api.yourdomain.com` → your actual API subdomain (e.g. `api.loveparcel.in`)
-
----
-
-### Step 3.3 — Upload Nginx Config to EC2
+Wait 5–30 minutes for DNS to update, then get free SSL:
 
 ```bash
-# From your local machine (Windows PowerShell)
-scp -i "C:\Users\HP\.ssh\loveparcel-key.pem" `
-    "d:\Dinestx\loveparcel\nginx\nginx.conf" `
-    ubuntu@YOUR_EC2_PUBLIC_IP:/home/ubuntu/loveparcel/nginx/nginx.conf
-```
-
----
-
-### Step 3.4 — Install Certbot & Get SSL Certificate
-
-Run these commands **inside EC2 terminal**:
-
-```bash
-# Install Certbot
+# On EC2 terminal
 sudo apt install -y certbot
 
-# Stop any service using port 80 temporarily
-# (Nginx isn't running yet, so this is fine)
-
-# Get SSL certificate (replace with your actual domain)
 sudo certbot certonly --standalone \
   -d yourdomain.com \
   -d api.yourdomain.com \
@@ -346,371 +410,398 @@ sudo certbot certonly --standalone \
   --agree-tos \
   --non-interactive
 
-# Certificates are saved to /etc/letsencrypt/live/yourdomain.com/
+# Reload Nginx to use the new certificates
+docker restart loveparcel-nginx
 ```
 
-Set up auto-renewal:
-```bash
-# Test renewal
-sudo certbot renew --dry-run
-
-# Add cron job to auto-renew
-echo "0 12 * * * root certbot renew --quiet --deploy-hook 'docker exec loveparcel-nginx nginx -s reload'" | \
-  sudo tee /etc/cron.d/certbot-renew
-```
+**Your app is live at `https://yourdomain.com` 🎉**
 
 ---
 
-## PART 4 — First Manual Deployment (Verify Everything Works)
+## D — Auto Deploy with GitHub Actions (CI/CD)
 
-### Step 4.1 — Build & Push Images from Local Machine
+Every time you push code to GitHub, it automatically builds and deploys.
 
-Run from your local machine (Windows PowerShell):
+### Step D1 — Generate Deploy SSH Key
 
 ```bash
-# Variables
-$AWS_REGION = "ap-south-1"
-$AWS_ACCOUNT_ID = (aws sts get-caller-identity --query Account --output text)
-$ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-
-# Login to ECR
-aws ecr get-login-password --region $AWS_REGION | `
-  docker login --username AWS --password-stdin $ECR_REGISTRY
-
-# Build and push backend
-docker build -t "${ECR_REGISTRY}/loveparcel-backend:latest" ./backend
-docker push "${ECR_REGISTRY}/loveparcel-backend:latest"
-
-# Build and push frontend (set your real API URL)
-docker build `
-  --build-arg NEXT_PUBLIC_API_URL=https://api.yourdomain.com `
-  -t "${ECR_REGISTRY}/loveparcel-frontend:latest" `
-  ./frontend
-docker push "${ECR_REGISTRY}/loveparcel-frontend:latest"
+# On your local machine
+ssh-keygen -t ed25519 -C "github-actions" -f loveparcel-deploy-key -N ""
+# This creates 2 files:
+#   loveparcel-deploy-key     (private — goes into GitHub)
+#   loveparcel-deploy-key.pub (public — goes into EC2)
 ```
 
----
-
-### Step 4.2 — Create .env File on EC2
-
-SSH into EC2 and create the environment file:
-
+Add public key to EC2:
 ```bash
-# Inside EC2 terminal
-cat > /home/ubuntu/loveparcel/.env << 'EOF'
-NODE_ENV=production
-PORT=5000
-
-# MongoDB Atlas connection string
-DATABASE_URL=mongodb+srv://username:password@cluster.mongodb.net/loveparcel
-
-# Authentication
-JWT_SECRET=your_very_long_random_secret_key_here
-
-# Cloudinary (image storage)
-CLOUDINARY_CLOUD_NAME=your_cloud_name
-CLOUDINARY_API_KEY=your_api_key
-CLOUDINARY_API_SECRET=your_api_secret
-
-# Redis (use Upstash.com free tier)
-REDIS_URL=rediss://your-upstash-redis-url
-
-# Razorpay payments
-RAZORPAY_KEY_ID=rzp_live_xxxxxx
-RAZORPAY_KEY_SECRET=your_razorpay_secret
-
-# Cashfree payments
-CASHFREE_APP_ID=your_app_id
-CASHFREE_SECRET_KEY=your_cashfree_secret
-
-# Email (use Gmail App Password)
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your@gmail.com
-SMTP_PASS=your_gmail_app_password
-
-# Google OAuth
-GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=GOCSPX-your_secret
-
-# Frontend → Backend URL (used in Next.js)
-NEXT_PUBLIC_API_URL=https://api.yourdomain.com
-
-# ECR registry for docker-compose.prod.yml
-ECR_REGISTRY=YOUR_ACCOUNT_ID.dkr.ecr.ap-south-1.amazonaws.com
-EOF
-```
-
----
-
-### Step 4.3 — Upload docker-compose.prod.yml to EC2
-
-```bash
-# From local machine
-scp -i "C:\Users\HP\.ssh\loveparcel-key.pem" `
-  "d:\Dinestx\loveparcel\docker-compose.prod.yml" `
-  ubuntu@YOUR_EC2_PUBLIC_IP:/home/ubuntu/loveparcel/docker-compose.prod.yml
-```
-
----
-
-### Step 4.4 — Start All Containers on EC2
-
-```bash
-# Inside EC2 terminal
-cd /home/ubuntu/loveparcel
-
-# Login to ECR
-aws ecr get-login-password --region ap-south-1 | \
-  docker login --username AWS --password-stdin \
-  $(aws sts get-caller-identity --query Account --output text).dkr.ecr.ap-south-1.amazonaws.com
-
-# Pull images and start
-docker compose -f docker-compose.prod.yml up -d
-
-# Watch startup logs
-docker compose -f docker-compose.prod.yml logs -f
-```
-
----
-
-### Step 4.5 — Verify It Works
-
-```bash
-# Check all 3 containers are running (backend, frontend, nginx)
-docker ps
-
-# Test health
-curl http://localhost:5000/health
-# Expected: {"status":"ok","uptime":...}
-
-curl http://localhost:3000
-# Expected: HTML from Next.js
-
-# Test through Nginx
-curl https://yourdomain.com
-curl https://api.yourdomain.com/health
-```
-
----
-
-## PART 5 — Set Up GitHub Actions CI/CD
-
-After your first manual deploy works, automate future deployments.
-
-### Step 5.1 — Generate SSH Key for GitHub Actions
-
-On your local machine:
-
-```bash
-# Generate a dedicated key for CI/CD
-ssh-keygen -t ed25519 -C "github-actions-loveparcel" -f loveparcel-deploy-key -N ""
-
-# This creates two files:
-# loveparcel-deploy-key       ← PRIVATE KEY (add to GitHub secrets)
-# loveparcel-deploy-key.pub   ← PUBLIC KEY (add to EC2)
-```
-
-Add the public key to EC2:
-
-```bash
-# Copy public key content first:
+# Print the public key
 cat loveparcel-deploy-key.pub
+# Copy all that text
 
-# Then in EC2 terminal, add it:
-echo "PASTE_PUBLIC_KEY_HERE" >> ~/.ssh/authorized_keys
-chmod 600 ~/.ssh/authorized_keys
+# SSH into EC2 and run:
+echo "PASTE_COPIED_TEXT_HERE" >> ~/.ssh/authorized_keys
 ```
 
 ---
 
-### Step 5.2 — Add GitHub Repository Secrets
+### Step D2 — Add GitHub Secrets
 
 Go to your GitHub repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
 
-Add every secret below:
+Add each one:
 
-| Secret Name | Where to get it | Example |
-|-------------|-----------------|---------|
-| `AWS_ACCESS_KEY_ID` | IAM user credentials CSV | `AKIA...` |
-| `AWS_SECRET_ACCESS_KEY` | IAM user credentials CSV | `wJal...` |
-| `AWS_ACCOUNT_ID` | `aws sts get-caller-identity` | `123456789012` |
-| `EC2_HOST` | EC2 Public IPv4 address | `13.234.56.78` |
-| `EC2_SSH_KEY` | Contents of `loveparcel-deploy-key` (private) | `-----BEGIN OPENSSH...` |
-| `DATABASE_URL` | MongoDB Atlas connection string | `mongodb+srv://...` |
-| `JWT_SECRET` | Random long string | `abc123...` |
-| `CLOUDINARY_CLOUD_NAME` | Cloudinary dashboard | `mycloud` |
-| `CLOUDINARY_API_KEY` | Cloudinary dashboard | `123456789` |
-| `CLOUDINARY_API_SECRET` | Cloudinary dashboard | `abcdef...` |
-| `REDIS_URL` | Upstash console | `rediss://...` |
-| `RAZORPAY_KEY_ID` | Razorpay dashboard | `rzp_live_...` |
-| `RAZORPAY_KEY_SECRET` | Razorpay dashboard | `your_secret` |
-| `CASHFREE_APP_ID` | Cashfree dashboard | `your_app_id` |
-| `CASHFREE_SECRET_KEY` | Cashfree dashboard | `your_secret` |
-| `SMTP_HOST` | Email provider | `smtp.gmail.com` |
-| `SMTP_PORT` | Email provider | `587` |
-| `SMTP_USER` | Your email | `you@gmail.com` |
-| `SMTP_PASS` | Gmail App Password | `xxxx xxxx xxxx xxxx` |
-| `GOOGLE_CLIENT_ID` | Google Cloud Console | `xxx.apps.googleusercontent.com` |
-| `GOOGLE_CLIENT_SECRET` | Google Cloud Console | `GOCSPX-...` |
-| `NEXT_PUBLIC_API_URL` | Your API domain | `https://api.yourdomain.com` |
-
----
-
-### Step 5.3 — Create GitHub Production Environment (Optional — Manual Approval Gate)
-
-1. GitHub repo → **Settings** → **Environments** → **New environment**
-2. Name: `production`
-3. Enable **Required reviewers** → add yourself
-4. Click **Save protection rules**
-
-This means every deploy to `main` will pause and wait for you to click **Approve** before the code goes live.
+| Secret Name | Value |
+|-------------|-------|
+| `AWS_ACCESS_KEY_ID` | From IAM CSV file |
+| `AWS_SECRET_ACCESS_KEY` | From IAM CSV file |
+| `AWS_ACCOUNT_ID` | Your 12-digit account ID |
+| `EC2_HOST` | Your EC2 public IP |
+| `EC2_SSH_KEY` | Open `loveparcel-deploy-key` in Notepad → paste all contents |
+| `DATABASE_URL` | MongoDB connection string |
+| `JWT_SECRET` | Your JWT secret |
+| `CLOUDINARY_CLOUD_NAME` | Cloudinary |
+| `CLOUDINARY_API_KEY` | Cloudinary |
+| `CLOUDINARY_API_SECRET` | Cloudinary |
+| `REDIS_URL` | Upstash URL |
+| `RAZORPAY_KEY_ID` | Razorpay |
+| `RAZORPAY_KEY_SECRET` | Razorpay |
+| `CASHFREE_APP_ID` | Cashfree |
+| `CASHFREE_SECRET_KEY` | Cashfree |
+| `SMTP_HOST` | `smtp.gmail.com` |
+| `SMTP_PORT` | `587` |
+| `SMTP_USER` | Your Gmail |
+| `SMTP_PASS` | Gmail App Password |
+| `GOOGLE_CLIENT_ID` | Google OAuth |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth |
+| `NEXT_PUBLIC_API_URL` | `https://api.yourdomain.com` |
 
 ---
 
-### Step 5.4 — Push Code to Trigger CI/CD
+### Step D3 — Push to Deploy
 
 ```bash
 git add .
-git commit -m "feat: add EC2 deployment with Docker + Nginx + CI/CD"
+git commit -m "deploy: latest changes"
 git push origin main
 ```
 
-Watch the pipeline run:
-- Go to GitHub repo → **Actions** tab
-- You'll see 3 jobs: **Lint** → **Build & Push** → **Deploy**
-- After approval (if configured), it deploys automatically
+Watch live at: **GitHub → Actions tab** — takes about 3–5 minutes.
 
 ---
 
-## PART 6 — Useful Commands After Deployment
+---
 
-### View logs
-```bash
-# SSH into EC2 first
-ssh -i "C:\Users\HP\.ssh\loveparcel-key.pem" ubuntu@YOUR_EC2_PUBLIC_IP
+# PART 3 — Deploy on AWS EKS (Kubernetes)
 
-# View all container logs
-docker compose -f /home/ubuntu/loveparcel/docker-compose.prod.yml logs -f
+> **Best for:** High traffic, auto-scaling, production-grade. Costs ~$150–200/month.
 
-# View specific service
-docker logs loveparcel-backend -f
-docker logs loveparcel-frontend -f
-docker logs loveparcel-nginx -f
-```
+---
 
-### Restart services
-```bash
-docker compose -f /home/ubuntu/loveparcel/docker-compose.prod.yml restart backend
-docker compose -f /home/ubuntu/loveparcel/docker-compose.prod.yml restart frontend
-```
+## A — Install Tools
 
-### Manual deploy (without CI/CD)
-```bash
-cd /home/ubuntu/loveparcel
+Install all of these on your computer:
 
-# Login to ECR
-aws ecr get-login-password --region ap-south-1 | \
-  docker login --username AWS --password-stdin \
-  $(aws sts get-caller-identity --query Account --output text).dkr.ecr.ap-south-1.amazonaws.com
+```powershell
+# AWS CLI (if not already installed)
+winget install -e --id Amazon.AWSCLI
 
-# Pull latest and restart
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
-docker image prune -f   # clean old images
-```
+# kubectl — controls Kubernetes
+winget install -e --id Kubernetes.kubectl
 
-### Check disk & memory
-```bash
-df -h        # disk usage
-free -h      # memory usage
-docker stats # live container resource usage
+# eksctl — creates EKS clusters
+winget install -e --id eksctl.eksctl
+
+# helm — installs packages in Kubernetes
+winget install -e --id Helm.Helm
+
+# Verify all
+aws --version
+kubectl version --client
+eksctl version
+helm version
 ```
 
 ---
 
-## PART 7 — Cost Estimate
+## B — AWS Setup (same as Part 2 A if already done)
 
-| Resource | Instance / Tier | Monthly Cost (approx) |
-|----------|----------------|----------------------|
-| EC2 t3.medium | On-demand | ~$30 USD |
-| EC2 t3.small | On-demand | ~$15 USD (if tight budget) |
-| Amazon ECR | First 500MB free | ~$0–$1 |
-| MongoDB Atlas M0 | Free tier | $0 |
-| Upstash Redis | Free tier (10k cmds/day) | $0 |
-| Cloudinary | Free tier (25 credits/month) | $0 |
+If you already did Part 2, skip to Step B3.
 
-> **Tip:** Use a **t3.small** instance to start (~$15/month). Upgrade to t3.medium if you face memory pressure.
+### Step B1 — Configure AWS CLI
+```bash
+aws configure
+# Access Key, Secret, Region: ap-south-1, Output: json
+```
+
+### Step B2 — Create ECR Repositories
+```bash
+aws ecr create-repository --repository-name loveparcel-backend --region ap-south-1
+aws ecr create-repository --repository-name loveparcel-frontend --region ap-south-1
+```
 
 ---
 
-## PART 8 — Security Checklist
+### Step B3 — Create EKS Cluster
 
-- [ ] SSH port 22 is restricted to **your IP only** in EC2 Security Group (not 0.0.0.0/0)
-- [ ] `.env` file on EC2 has restricted permissions: `chmod 600 /home/ubuntu/loveparcel/.env`
-- [ ] Never commit `.env` or `.pem` files to Git
-- [ ] Rotate AWS access keys every 90 days
-- [ ] Enable **AWS CloudTrail** for audit logging (free tier available)
-- [ ] Enable **EC2 termination protection** in console
-- [ ] Set up **AWS Budget Alert** at $50/month to avoid surprise bills
+This takes **15–20 minutes**:
+
+```bash
+eksctl create cluster \
+  --name loveparcel-cluster \
+  --region ap-south-1 \
+  --nodegroup-name workers \
+  --node-type t3.medium \
+  --nodes 2 \
+  --nodes-min 2 \
+  --nodes-max 4 \
+  --managed
+```
+
+Connect kubectl to your new cluster:
+```bash
+aws eks update-kubeconfig --region ap-south-1 --name loveparcel-cluster
+
+# Verify nodes are ready
+kubectl get nodes
+# Should show 2 nodes with STATUS = Ready
+```
 
 ---
 
-## PART 9 — Troubleshooting
+### Step B4 — Install AWS Load Balancer Controller
 
-### Containers not starting
+This lets Kubernetes create an AWS Load Balancer automatically:
+
 ```bash
-docker compose -f docker-compose.prod.yml logs
-# Look for: missing env vars, connection refused, port already in use
+# Download IAM policy
+curl -O https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.7.0/docs/install/iam_policy.json
+
+# Create the policy in AWS
+aws iam create-policy \
+  --policy-name AWSLoadBalancerControllerIAMPolicy \
+  --policy-document file://iam_policy.json
+
+# Create service account
+eksctl create iamserviceaccount \
+  --cluster=loveparcel-cluster \
+  --namespace=kube-system \
+  --name=aws-load-balancer-controller \
+  --attach-policy-arn=arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):policy/AWSLoadBalancerControllerIAMPolicy \
+  --approve
+
+# Install via Helm
+helm repo add eks https://aws.github.io/eks-charts
+helm repo update
+
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=loveparcel-cluster \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller
+
+# Verify it's running
+kubectl get deployment -n kube-system aws-load-balancer-controller
 ```
 
-### Cannot pull from ECR
+---
+
+### Step B5 — Install Metrics Server (for Auto Scaling)
+
 ```bash
-# Re-login to ECR on EC2
-aws ecr get-login-password --region ap-south-1 | \
-  docker login --username AWS --password-stdin \
-  YOUR_ACCOUNT_ID.dkr.ecr.ap-south-1.amazonaws.com
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 ```
 
-### Nginx 502 Bad Gateway
+---
+
+### Step B6 — Get SSL Certificate from ACM
+
 ```bash
-# Backend or frontend not running
-docker ps   # check containers are up
-docker logs loveparcel-backend --tail=50
+# Request a free SSL certificate
+aws acm request-certificate \
+  --domain-name yourdomain.com \
+  --subject-alternative-names "*.yourdomain.com" \
+  --validation-method DNS \
+  --region ap-south-1
 ```
 
-### SSL certificate error
-```bash
-# Renew certificate
-sudo certbot renew
-# Then reload nginx
-docker exec loveparcel-nginx nginx -s reload
+After running this:
+1. Go to AWS Console → **ACM** (Certificate Manager)
+2. Click on the certificate → **Create records in Route 53** (if using Route 53) OR copy the CNAME records to your DNS provider
+3. Wait 5–10 min for validation → status changes to **Issued**
+4. Copy the **Certificate ARN** (looks like `arn:aws:acm:ap-south-1:123456789:certificate/abc-def`)
+5. Paste it into `k8s/ingress.yaml` line: `alb.ingress.kubernetes.io/certificate-arn: YOUR_ARN`
+
+---
+
+## C — Build & Push Images
+
+On your local machine:
+
+```powershell
+$REGION = "ap-south-1"
+$ACCOUNT_ID = (aws sts get-caller-identity --query Account --output text)
+$ECR = "$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
+
+# Login
+aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR
+
+# Backend
+docker build -t "$ECR/loveparcel-backend:latest" ./backend
+docker push "$ECR/loveparcel-backend:latest"
+
+# Frontend
+docker build --build-arg NEXT_PUBLIC_API_URL=https://api.yourdomain.com `
+  -t "$ECR/loveparcel-frontend:latest" ./frontend
+docker push "$ECR/loveparcel-frontend:latest"
 ```
 
-### Port 80/443 not accessible
-```bash
-# Check EC2 Security Group rules allow inbound port 80 and 443
-# AWS Console → EC2 → Security Groups → Your SG → Inbound rules
+---
+
+## D — Update Config Files
+
+### Step D1 — Update image URLs in deployment files
+
+Open `k8s/backend-deployment.yaml` and find this line:
+```yaml
+image: YOUR_ECR_REGISTRY/loveparcel-backend:latest
+```
+Replace with your actual ECR URL:
+```yaml
+image: 123456789.dkr.ecr.ap-south-1.amazonaws.com/loveparcel-backend:latest
 ```
 
-### CI/CD fails on SSH step
-```bash
-# Test SSH manually
-ssh -i loveparcel-deploy-key ubuntu@YOUR_EC2_IP
+Do the same in `k8s/frontend-deployment.yaml`.
 
-# Verify public key is in EC2's authorized_keys
-cat ~/.ssh/authorized_keys
+### Step D2 — Update domain in ingress
+
+Open `k8s/ingress.yaml` and replace:
+- `yourdomain.com` → your actual domain
+- `api.yourdomain.com` → your API domain
+- Add your ACM certificate ARN
+
+---
+
+## E — Deploy to Kubernetes
+
+```bash
+# 1. Create namespace
+kubectl apply -f k8s/namespace.yaml
+
+# 2. Create secrets from your .env file
+kubectl create secret generic loveparcel-secrets \
+  --namespace=loveparcel \
+  --from-env-file=.env \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# 3. Deploy backend
+kubectl apply -f k8s/backend-deployment.yaml
+
+# 4. Deploy frontend
+kubectl apply -f k8s/frontend-deployment.yaml
+
+# 5. Create load balancer + routing
+kubectl apply -f k8s/ingress.yaml
+
+# 6. Set up auto-scaling
+kubectl apply -f k8s/hpa.yaml
 ```
 
-### Backend crashed — rollback manually
+Check everything is running:
 ```bash
-cd /home/ubuntu/loveparcel
+# Watch pods start up (takes 1-2 min)
+kubectl get pods -n loveparcel --watch
 
-# Check what went wrong
-docker logs loveparcel-backend --tail=100
-
-# Pull a specific older image tag (replace SHA with a previous commit hash)
-docker pull YOUR_ECR_REGISTRY/loveparcel-backend:PREVIOUS_SHA
-# Edit docker-compose.prod.yml to use that tag, then:
-docker compose -f docker-compose.prod.yml up -d
+# Get the load balancer URL
+kubectl get ingress -n loveparcel
+# Copy the ADDRESS — this is your app URL
 ```
+
+---
+
+## F — Point Domain to EKS
+
+In your DNS provider, add CNAME records pointing to the Load Balancer URL:
+```
+CNAME   yourdomain.com       →  k8s-xxx.ap-south-1.elb.amazonaws.com
+CNAME   api.yourdomain.com   →  k8s-xxx.ap-south-1.elb.amazonaws.com
+```
+
+---
+
+## G — CI/CD for EKS (GitHub Actions)
+
+The `.github/workflows/deploy.yml` file already handles this automatically.
+
+Add these GitHub secrets (same as Part 2 D2, plus these):
+
+| Secret | Value |
+|--------|-------|
+| `AWS_ACCESS_KEY_ID` | IAM access key |
+| `AWS_SECRET_ACCESS_KEY` | IAM secret key |
+| `AWS_ACCOUNT_ID` | Your account ID |
+| + all the app secrets | (same as Part 2 list) |
+
+Then push code — GitHub Actions will:
+1. Build Docker images
+2. Push to ECR
+3. Update Kubernetes deployments
+
+```bash
+git add .
+git commit -m "deploy: kubernetes production"
+git push origin main
+```
+
+---
+
+## Useful Kubernetes Commands
+
+```bash
+# See all running pods
+kubectl get pods -n loveparcel
+
+# See pod logs
+kubectl logs -f deployment/backend -n loveparcel
+kubectl logs -f deployment/frontend -n loveparcel
+
+# Restart a deployment
+kubectl rollout restart deployment/backend -n loveparcel
+
+# Rollback if something broke
+kubectl rollout undo deployment/backend -n loveparcel
+
+# Scale manually
+kubectl scale deployment/backend --replicas=3 -n loveparcel
+
+# Check auto-scaler
+kubectl get hpa -n loveparcel
+
+# Open shell inside a pod
+kubectl exec -it $(kubectl get pod -l app=backend -n loveparcel -o name | head -1) -n loveparcel -- /bin/sh
+```
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| Docker Desktop not running | Open Docker Desktop app and wait for it to start |
+| `Cannot connect to Docker daemon` | Same as above |
+| `ImagePullBackOff` (EC2/EKS) | Run the ECR login command again |
+| `502 Bad Gateway` (Nginx) | Backend crashed — `docker logs loveparcel-backend` |
+| SSL not working | Run `sudo certbot renew` then restart Nginx |
+| Pods stuck in `Pending` (EKS) | Nodes out of memory — upgrade instance type |
+| Ingress has no ADDRESS (EKS) | Load Balancer Controller not installed — check Step B4 |
+| Backend crashes on start | `.env` is missing or wrong — check `DATABASE_URL` |
+| GitHub Actions SSH fails | Check `EC2_SSH_KEY` secret has the full private key content |
+
+---
+
+## Cost Comparison
+
+| Option | Cost/Month | Best For |
+|--------|-----------|----------|
+| EC2 t3.small | ~$15 | Low traffic, budget |
+| EC2 t3.medium | ~$30 | Medium traffic, recommended |
+| EKS + 2x t3.medium | ~$150 | High traffic, auto-scale |
