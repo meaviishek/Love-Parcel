@@ -15,7 +15,7 @@ import { fetchCategories } from '@/store/slices/categorySlice';
 
 import { useSearchParams, useRouter } from 'next/navigation';
 
-export default function ShopPage() {
+function ShopContent() {
     const dispatch = useDispatch<AppDispatch>();
     const searchParams = useSearchParams();
     const router = useRouter();
@@ -75,5 +75,13 @@ export default function ShopPage() {
             </div>
 
         </main>
+    );
+}
+
+export default function ShopPage() {
+    return (
+        <React.Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="animate-pulse text-gray-400">Loading...</div></div>}>
+            <ShopContent />
+        </React.Suspense>
     );
 }

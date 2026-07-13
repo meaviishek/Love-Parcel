@@ -126,7 +126,7 @@ docker-compose down
 4. Click **Next** → Select **Attach policies directly**
 5. Search and check these policies:
    - ✅ `AmazonEC2FullAccess`
-   - ✅ `AmazonECRFullAccess`
+   - ✅ `AmazonEC2ContainerRegistryFullAccess`
 6. Click **Create user**
 7. Click on the user you just created → **Security credentials** tab
 8. Click **Create access key** → choose **Command Line Interface (CLI)**
@@ -292,7 +292,8 @@ mkdir -p /home/ubuntu/loveparcel/nginx
 ### Step C1 — Build & Push Images (on your computer)
 
 Open PowerShell on **your local machine** (not EC2):
-
+557690591689
+557690591689.dkr.ecr.$REGION.amazonaws.com
 ```powershell
 # Set variables
 $REGION = "ap-south-1"
@@ -317,7 +318,7 @@ docker push "$ECR/loveparcel-frontend:latest"
 ```
 
 ---
-
+docker build --build-arg NEXT_PUBLIC_API_URL=http://13.60.188.45:5000/api -t 557690591689.dkr.ecr.ap-south-1.amazonaws.com/loveparcel-frontend:latest ./frontend
 ### Step C2 — Copy Config Files to EC2
 
 ```powershell
@@ -330,7 +331,8 @@ scp -i $KEY nginx/nginx.conf ubuntu@${IP}:/home/ubuntu/loveparcel/nginx/
 ```
 
 ---
-
+scp -i C:\Users\HP\.ssh\loveparcel-key.pem docker-compose.prod.yml ubuntu@13.60.188.45:/home/ubuntu/loveparcel/
+scp -i C:\Users\HP\.ssh\loveparcel-key.pem nginx/nginx.conf ubuntu@13.60.188.45:/home/ubuntu/loveparcel/nginx/
 ### Step C3 — Create `.env` on EC2
 
 SSH into EC2, then:

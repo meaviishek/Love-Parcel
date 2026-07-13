@@ -1,0 +1,144 @@
+﻿name: Deploy LoveParcel to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-south-1.amazonaws.com
+  BACKEND_IMAGE: loveparcel-backend
+  FRONTEND_IMAGE: loveparcel-frontend
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 1 — Build & Push Docker images to AWS ECR
+  # ─────────────────────────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+
+    outputs:
+      image-tag: ${{ steps.tag.outputs.tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: tag
+        run: echo "tag=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push backend image
+        run: |
+          docker build \
+            -t $ECR_REGISTRY/$BACKEND_IMAGE:${{ steps.tag.outputs.tag }} \
+            -t $ECR_REGISTRY/$BACKEND_IMAGE:latest \
+            ./backend
+          docker push $ECR_REGISTRY/$BACKEND_IMAGE:${{ steps.tag.outputs.tag }}
+          docker push $ECR_REGISTRY/$BACKEND_IMAGE:latest
+
+      - name: Build & push frontend image
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }} \
+            -t $ECR_REGISTRY/$FRONTEND_IMAGE:${{ steps.tag.outputs.tag }} \
+            -t $ECR_REGISTRY/$FRONTEND_IMAGE:latest \
+            ./frontend
+          docker push $ECR_REGISTRY/$FRONTEND_IMAGE:${{ steps.tag.outputs.tag }}
+          docker push $ECR_REGISTRY/$FRONTEND_IMAGE:latest
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 2 — Deploy to EC2 over SSH
+  # ─────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: build-and-push
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: SCP files to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "docker-compose.prod.yml,nginx/nginx.conf"
+          target: "/home/ubuntu/loveparcel"
+          strip_components: 0
+
+      - name: SSH into EC2 and deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: IMAGE_TAG
+          script: |
+            set -e
+            IMAGE_TAG="${{ needs.build-and-push.outputs.image-tag }}"
+            REGION="ap-south-1"
+            ACCOUNT_ID="${{ secrets.AWS_ACCOUNT_ID }}"
+            ECR="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+
+            echo "==> Logging into ECR"
+            aws ecr get-login-password --region $REGION | \
+              docker login --username AWS --password-stdin $ECR
+
+            echo "==> Writing .env"
+            mkdir -p /home/ubuntu/loveparcel
+            cat > /home/ubuntu/loveparcel/.env <<ENVEOF
+            NODE_ENV=production
+            PORT=5000
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            JWT_ACCESS_SECRET=${{ secrets.JWT_ACCESS_SECRET }}
+            JWT_REFRESH_SECRET=${{ secrets.JWT_REFRESH_SECRET }}
+            CLOUDINARY_CLOUD_NAME=${{ secrets.CLOUDINARY_CLOUD_NAME }}
+            CLOUDINARY_API_KEY=${{ secrets.CLOUDINARY_API_KEY }}
+            CLOUDINARY_API_SECRET=${{ secrets.CLOUDINARY_API_SECRET }}
+            MAIL_HOST=${{ secrets.SMTP_HOST }}
+            MAIL_PORT=${{ secrets.SMTP_PORT }}
+            MAIL_ADMINISTRATOR=${{ secrets.SMTP_USER }}
+            MAIL_ADMINISTRATOR_PASS=${{ secrets.SMTP_PASS }}
+            RAZORPAY_KEY_ID=${{ secrets.RAZORPAY_KEY_ID }}
+            RAZORPAY_KEY_SECRET=${{ secrets.RAZORPAY_KEY_SECRET }}
+            CASHFREE_APP_ID=${{ secrets.CASHFREE_APP_ID }}
+            CASHFREE_SECRET_KEY=${{ secrets.CASHFREE_SECRET_KEY }}
+            CASHFREE_ENV=production
+            GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+            GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+            GOOGLE_CALLBACK_URL=${{ secrets.NEXT_PUBLIC_API_URL }}/api/auth/google/callback
+            FRONTEND_URL=https://${{ secrets.EC2_HOST }}
+            NEXTAUTH_URL=https://${{ secrets.EC2_HOST }}
+            NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
+            ECR_REGISTRY=${ECR}
+            IMAGE_TAG=${IMAGE_TAG}
+            ENVEOF
+
+            echo "==> Pulling images"
+            cd /home/ubuntu/loveparcel
+            ECR_REGISTRY=$ECR IMAGE_TAG=$IMAGE_TAG docker compose -f docker-compose.prod.yml pull
+
+            echo "==> Starting containers"
+            ECR_REGISTRY=$ECR IMAGE_TAG=$IMAGE_TAG docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            echo "==> Pruning old images"
+            docker image prune -f
+
+            echo "==> Done"
+            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
