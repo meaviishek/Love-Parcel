@@ -1,7 +1,9 @@
 ﻿version: "3.9"
 
 # ─────────────────────────────────────────────────────────────────────
-# PRODUCTION — pulls pre-built images from ECR
+# PRODUCTION — No domain, IP-only access
+# Frontend  → http://13.60.188.45:3000
+# Backend   → http://13.60.188.45:5000
 # Usage: ECR_REGISTRY=... IMAGE_TAG=... docker compose -f docker-compose.prod.yml up -d
 # ─────────────────────────────────────────────────────────────────────
 
@@ -10,6 +12,8 @@ services:
     image: ${ECR_REGISTRY}/loveparcel-backend:${IMAGE_TAG:-latest}
     container_name: loveparcel-backend
     restart: unless-stopped
+    ports:
+      - "5000:5000"
     env_file:
       - .env
     environment:
@@ -28,6 +32,8 @@ services:
     image: ${ECR_REGISTRY}/loveparcel-frontend:${IMAGE_TAG:-latest}
     container_name: loveparcel-frontend
     restart: unless-stopped
+    ports:
+      - "3000:3000"
     env_file:
       - .env
     environment:
@@ -38,23 +44,6 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    networks:
-      - loveparcel-network
-
-  nginx:
-    image: nginx:1.25-alpine
-    container_name: loveparcel-nginx
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-      - /var/www/certbot:/var/www/certbot:ro
-    depends_on:
-      - frontend
-      - backend
     networks:
       - loveparcel-network
 

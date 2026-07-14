@@ -1,4 +1,4 @@
-﻿name: Deploy LoveParcel to AWS EC2
+name: Deploy LoveParcel to AWS EC2
 
 on:
   push:
@@ -123,8 +123,8 @@ jobs:
             GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
             GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
             GOOGLE_CALLBACK_URL=${{ secrets.NEXT_PUBLIC_API_URL }}/api/auth/google/callback
-            FRONTEND_URL=https://${{ secrets.EC2_HOST }}
-            NEXTAUTH_URL=https://${{ secrets.EC2_HOST }}
+            FRONTEND_URL=http://${{ secrets.EC2_HOST }}:3000
+            NEXTAUTH_URL=http://${{ secrets.EC2_HOST }}:3000
             NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
             ECR_REGISTRY=${ECR}
             IMAGE_TAG=${IMAGE_TAG}

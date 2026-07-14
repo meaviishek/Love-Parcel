@@ -291,14 +291,14 @@ mkdir -p /home/ubuntu/loveparcel/nginx
 
 ### Step C1 — Build & Push Images (on your computer)
 
-Open PowerShell on **your local machine** (not EC2):
-557690591689
-557690591689.dkr.ecr.$REGION.amazonaws.com
+Open **PowerShell** on your local machine (not EC2):
+
 ```powershell
-# Set variables
-$REGION = "ap-south-1"
-$ACCOUNT_ID = (aws sts get-caller-identity --query Account --output text)
-$ECR = "$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
+# Your details
+$REGION    = "ap-south-1"
+$ACCOUNT   = "557690591689"
+$EC2_IP    = "13.60.188.45"
+$ECR       = "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 
 # Login to ECR
 aws ecr get-login-password --region $REGION | `
@@ -308,32 +308,46 @@ aws ecr get-login-password --region $REGION | `
 docker build -t "$ECR/loveparcel-backend:latest" ./backend
 docker push "$ECR/loveparcel-backend:latest"
 
-# Build and push frontend
-# Replace https://api.yourdomain.com with your actual API URL
+# Build frontend — bake the EC2 backend URL into the image
 docker build `
-  --build-arg NEXT_PUBLIC_API_URL=https://api.yourdomain.com `
+  --build-arg NEXT_PUBLIC_API_URL=http://${EC2_IP}:5000 `
   -t "$ECR/loveparcel-frontend:latest" `
   ./frontend
 docker push "$ECR/loveparcel-frontend:latest"
 ```
 
 ---
-docker build --build-arg NEXT_PUBLIC_API_URL=http://13.60.188.45:5000/api -t 557690591689.dkr.ecr.ap-south-1.amazonaws.com/loveparcel-frontend:latest ./frontend
-### Step C2 — Copy Config Files to EC2
+
+### Step C2 — Open EC2 Security Group Ports
+
+> Without a domain you access the app directly by IP and port, so you must open the ports.
+
+1. AWS Console → **EC2** → **Instances** → click your instance
+2. Scroll down → **Security** tab → click the Security Group link
+3. Click **Edit inbound rules** → **Add rule** for each:
+
+| Type       | Port | Source    |
+|------------|------|-----------|
+| Custom TCP | 3000 | 0.0.0.0/0 |
+| Custom TCP | 5000 | 0.0.0.0/0 |
+
+4. Click **Save rules**
+
+---
+
+### Step C3 — Copy Compose File to EC2
 
 ```powershell
 # From your local machine PowerShell
-$IP = "YOUR_EC2_IP"
+$IP  = "13.60.188.45"
 $KEY = "C:\Users\HP\.ssh\loveparcel-key.pem"
 
 scp -i $KEY docker-compose.prod.yml ubuntu@${IP}:/home/ubuntu/loveparcel/
-scp -i $KEY nginx/nginx.conf ubuntu@${IP}:/home/ubuntu/loveparcel/nginx/
 ```
 
 ---
-scp -i C:\Users\HP\.ssh\loveparcel-key.pem docker-compose.prod.yml ubuntu@13.60.188.45:/home/ubuntu/loveparcel/
-scp -i C:\Users\HP\.ssh\loveparcel-key.pem nginx/nginx.conf ubuntu@13.60.188.45:/home/ubuntu/loveparcel/nginx/
-### Step C3 — Create `.env` on EC2
+
+### Step C4 — Create `.env` on EC2
 
 SSH into EC2, then:
 
@@ -341,35 +355,49 @@ SSH into EC2, then:
 nano /home/ubuntu/loveparcel/.env
 ```
 
-Paste and fill in (same values as Part 1 but with production API URL):
+Paste and fill in your real values:
 
 ```env
 NODE_ENV=production
+PORT=5000
+
 DATABASE_URL=mongodb+srv://USERNAME:PASSWORD@cluster0.xxxxx.mongodb.net/loveparcel
-JWT_SECRET=your_long_random_secret
+
+JWT_ACCESS_SECRET=your_long_random_secret
+JWT_REFRESH_SECRET=your_long_random_refresh_secret
+
 CLOUDINARY_CLOUD_NAME=your_cloud_name
 CLOUDINARY_API_KEY=your_api_key
 CLOUDINARY_API_SECRET=your_api_secret
-REDIS_URL=rediss://your-upstash-url
+
+MAIL_HOST=smtp.gmail.com
+MAIL_PORT=587
+MAIL_ADMINISTRATOR=your@gmail.com
+MAIL_ADMINISTRATOR_PASS=xxxx xxxx xxxx xxxx
+
 RAZORPAY_KEY_ID=rzp_live_xxxxx
 RAZORPAY_KEY_SECRET=your_secret
+
 CASHFREE_APP_ID=your_app_id
 CASHFREE_SECRET_KEY=your_secret
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your@gmail.com
-SMTP_PASS=your_app_password
+CASHFREE_ENV=production
+
 GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=GOCSPX-your_secret
-NEXT_PUBLIC_API_URL=https://api.yourdomain.com
-ECR_REGISTRY=YOUR_ACCOUNT_ID.dkr.ecr.ap-south-1.amazonaws.com
+GOOGLE_CALLBACK_URL=http://13.60.188.45:5000/api/auth/google/callback
+
+FRONTEND_URL=http://13.60.188.45:3000
+NEXTAUTH_URL=http://13.60.188.45:3000
+NEXT_PUBLIC_API_URL=http://13.60.188.45:5000
+
+ECR_REGISTRY=557690591689.dkr.ecr.ap-south-1.amazonaws.com
 ```
 
 Save: press `Ctrl+X` then `Y` then `Enter`
 
 ---
 
-### Step C4 — Start the App on EC2
+### Step C5 — Start the App on EC2
 
 ```bash
 cd /home/ubuntu/loveparcel
@@ -377,48 +405,32 @@ cd /home/ubuntu/loveparcel
 # Login to ECR from EC2
 aws ecr get-login-password --region ap-south-1 | \
   docker login --username AWS --password-stdin \
-  $(aws sts get-caller-identity --query Account --output text).dkr.ecr.ap-south-1.amazonaws.com
+  557690591689.dkr.ecr.ap-south-1.amazonaws.com
 
-# Pull and start all containers
+# Pull and start containers
+ECR_REGISTRY=557690591689.dkr.ecr.ap-south-1.amazonaws.com \
+IMAGE_TAG=latest \
 docker compose -f docker-compose.prod.yml up -d
 
 # Check they are running
 docker ps
 ```
 
-You should see 3 containers running: `loveparcel-backend`, `loveparcel-frontend`, `loveparcel-nginx`
+You should see 2 containers running: `loveparcel-backend`, `loveparcel-frontend`
 
 ---
 
-### Step C5 — Point Domain & Get SSL
+### Step C6 — Open in Browser
 
-**DNS Records** (add in your domain provider — GoDaddy, Namecheap, Cloudflare):
-```
-Type  Name               Value
-A     yourdomain.com     YOUR_EC2_IP
-A     api.yourdomain.com YOUR_EC2_IP
-```
+| URL | What you should see |
+|-----|---------------------|
+| `http://13.60.188.45:3000` | Your frontend (Next.js) |
+| `http://13.60.188.45:5000/health` | `{"status":"ok"}` — backend running |
 
-Wait 5–30 minutes for DNS to update, then get free SSL:
-
-```bash
-# On EC2 terminal
-sudo apt install -y certbot
-
-sudo certbot certonly --standalone \
-  -d yourdomain.com \
-  -d api.yourdomain.com \
-  --email your@email.com \
-  --agree-tos \
-  --non-interactive
-
-# Reload Nginx to use the new certificates
-docker restart loveparcel-nginx
-```
-
-**Your app is live at `https://yourdomain.com` 🎉**
+**Your app is live! 🎉**
 
 ---
+
 
 ## D — Auto Deploy with GitHub Actions (CI/CD)
 
@@ -456,15 +468,15 @@ Add each one:
 |-------------|-------|
 | `AWS_ACCESS_KEY_ID` | From IAM CSV file |
 | `AWS_SECRET_ACCESS_KEY` | From IAM CSV file |
-| `AWS_ACCOUNT_ID` | Your 12-digit account ID |
-| `EC2_HOST` | Your EC2 public IP |
+| `AWS_ACCOUNT_ID` | `557690591689` |
+| `EC2_HOST` | `13.60.188.45` |
 | `EC2_SSH_KEY` | Open `loveparcel-deploy-key` in Notepad → paste all contents |
 | `DATABASE_URL` | MongoDB connection string |
-| `JWT_SECRET` | Your JWT secret |
+| `JWT_ACCESS_SECRET` | Your JWT access secret |
+| `JWT_REFRESH_SECRET` | Your JWT refresh secret |
 | `CLOUDINARY_CLOUD_NAME` | Cloudinary |
 | `CLOUDINARY_API_KEY` | Cloudinary |
 | `CLOUDINARY_API_SECRET` | Cloudinary |
-| `REDIS_URL` | Upstash URL |
 | `RAZORPAY_KEY_ID` | Razorpay |
 | `RAZORPAY_KEY_SECRET` | Razorpay |
 | `CASHFREE_APP_ID` | Cashfree |
@@ -475,7 +487,7 @@ Add each one:
 | `SMTP_PASS` | Gmail App Password |
 | `GOOGLE_CLIENT_ID` | Google OAuth |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth |
-| `NEXT_PUBLIC_API_URL` | `https://api.yourdomain.com` |
+| `NEXT_PUBLIC_API_URL` | `http://13.60.188.45:5000` |
 
 ---
 
