@@ -295,25 +295,22 @@ Open **PowerShell** on your local machine (not EC2):
 
 ```powershell
 # Your details
-$REGION    = "ap-south-1"
-$ACCOUNT   = "557690591689"
-$EC2_IP    = "13.60.188.45"
-$ECR       = "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 
 # Login to ECR
-aws ecr get-login-password --region $REGION | `
-  docker login --username AWS --password-stdin $ECR
+aws ecr get-login-password --region ap-south-1 | `
+  docker login --username AWS --password-stdin 557690591689.dkr.ecr.ap-south-1.amazonaws.com
 
 # Build and push backend
-docker build -t "$ECR/loveparcel-backend:latest" ./backend
-docker push "$ECR/loveparcel-backend:latest"
+docker build -t "557690591689.dkr.ecr.ap-south-1.amazonaws.com/loveparcel-backend:latest" ./backend
+docker push 557690591689.dkr.ecr.ap-south-1.amazonaws.com/loveparcel-backend:latest
 
 # Build frontend — bake the EC2 backend URL into the image
-docker build `
-  --build-arg NEXT_PUBLIC_API_URL=http://${EC2_IP}:5000 `
-  -t "$ECR/loveparcel-frontend:latest" `
-  ./frontend
-docker push "$ECR/loveparcel-frontend:latest"
+docker build --build-arg NEXT_PUBLIC_API_URL=http://13.60.188.45:5000/api/ -t 557690591689.dkr.ecr.ap-south-1.amazonaws.com/loveparcel-frontend:latest ./frontend
+
+docker push 557690591689.dkr.ecr.ap-south-1.amazonaws.com/loveparcel-frontend:latest
+
+
+
 ```
 
 ---
@@ -407,6 +404,7 @@ aws ecr get-login-password --region ap-south-1 | \
   docker login --username AWS --password-stdin \
   557690591689.dkr.ecr.ap-south-1.amazonaws.com
 
+docker compose -f docker-compose.prod.yml pull
 # Pull and start containers
 ECR_REGISTRY=557690591689.dkr.ecr.ap-south-1.amazonaws.com \
 IMAGE_TAG=latest \
