@@ -1,0 +1,256 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+
+enum PlatformRole {
+  SUPER_ADMIN
+  ADMIN
+  USER
+}
+
+model User {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  email     String   @unique
+  phone     String?
+  password  String?
+  googleId  String?  @unique
+  isEmailVerified Boolean @default(false)
+  isPhoneVerified Boolean @default(false)
+  avatar    String?
+  platformRole  PlatformRole @default(USER)
+  createdAt DateTime @default(now())
+
+  addresses Address[]
+  carts     Cart[]
+  orders    Order[]
+}
+
+model Address {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
+
+  fullName String
+  phone    String
+  house    String
+  area     String
+  landmark String?
+  city     String
+  state    String
+  pincode  String
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Category {
+  id    String  @id @default(auto()) @map("_id") @db.ObjectId
+  name  String  @unique
+  slug  String  @unique
+  image String?
+
+  products Product[]
+}
+
+enum ProductType {
+  SINGLE
+  HAMPER
+}
+
+model Product {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String
+  price       Int
+  originalPrice Int?
+  stock       Int
+  images      String[]
+  tags        String[]
+  occasions   String[]
+  specifications Json?
+  isActive    Boolean  @default(true)
+  requiresImage Boolean @default(false)
+
+  categoryId String   @db.ObjectId
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  productType ProductType @default(SINGLE)
+
+  createdAt DateTime @default(now())
+}
+
+model HamperBox {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  minItems  Int
+  basePrice Int
+  image     String?
+}
+
+// model HamperItem removed
+
+model CustomHamper {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
+
+  boxId  String? @db.ObjectId
+  
+  items      CustomHamperItem[]
+  totalPrice Int
+  
+  isDraft    Boolean @default(true)
+  
+  // Hamper Level Customization
+  note       String?
+  imageLinks String[]
+
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  createdAt DateTime @default(now())
+}
+
+model CustomHamperItem {
+  id           String @id @default(auto()) @map("_id") @db.ObjectId
+  hamperId     String @db.ObjectId
+  
+  // Only Product references now
+  productId    String @db.ObjectId
+
+  quantity     Int
+  
+  // Item-level Customization
+  customizationNote   String?
+  customizationImages String[]
+
+  hamper CustomHamper @relation(fields: [hamperId], references: [id])
+}
+
+model Cart {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
+
+  items     CartItem[]
+  updatedAt DateTime   @updatedAt
+  user      User       @relation(fields: [userId], references: [id])
+}
+
+model CartItem {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  cartId String @db.ObjectId
+
+  productId String? @db.ObjectId
+  
+  // Customization for Product
+  // Customization for Product
+  customizationNote   String?
+  customizationImages String[]
+
+  // Custom Hamper
+  customHamperId  String? @db.ObjectId
+  customHamper    CustomHamper? @relation(fields: [customHamperId], references: [id])
+
+  quantity Int
+  cart     Cart @relation(fields: [cartId], references: [id])
+}
+
+
+
+
+model Order {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String @db.ObjectId
+  addressId String @db.ObjectId
+
+  totalAmount   Int
+  paymentMode   PaymentMode
+  paymentStatus PaymentStatus
+  orderStatus   OrderStatus
+
+  items     OrderItem[]
+  createdAt DateTime    @default(now())
+  user      User        @relation(fields: [userId], references: [id])
+
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  razorpaySignature String?
+}
+
+model OrderItem {
+  id      String @id @default(auto()) @map("_id") @db.ObjectId
+  orderId String @db.ObjectId
+
+  productId String?
+
+  hamperId  String? // Keep for backward compatibility or if using Product as Hamper?
+  
+  // New fields for OrderItem too? 
+  // Customization note/drive link usually on Product. 
+  // If we want to persist customization in Order, we need fields here.
+  customizationNote String?
+  customizationImages String[] 
+  
+  // Custom Hamper Snapshot? 
+  // Complex. A custom hamper in Order might just be a JSON snapshot or relation to CustomHamper that persists?
+  // Schema rarely deletes custom hampers?
+  // Let's add customHamperId here too if we want to query it.
+  customHamperId String? @db.ObjectId
+  customHamper   CustomHamper? @relation(fields: [customHamperId], references: [id])
+
+  quantity Int
+  price    Int
+  order    Order @relation(fields: [orderId], references: [id])
+}
+
+enum PaymentMode {
+  COD
+  CASHFREE
+  RAZORPAY
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+enum OrderStatus {
+  PLACED
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+model Coupon {
+  id                  String       @id @default(auto()) @map("_id") @db.ObjectId
+  code                String       @unique
+  discountType        DiscountType
+  discountValue       Int
+  minPurchaseAmount   Int?
+  maxDiscountAmount   Int?
+  expirationDate      DateTime?
+  usageLimit          Int?
+  usedCount           Int          @default(0)
+  isActive            Boolean      @default(true)
+  applicableProductIds String[]    @db.ObjectId
+
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+}
